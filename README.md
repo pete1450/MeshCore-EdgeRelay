@@ -49,7 +49,9 @@ Core protocol code in `src/` is untouched.
 | `ADVERT` from an owner | Drop (never export owner adverts) | — |
 | `ADVERT` from anyone else | Drop (mirroring opt-in only, off by default) | — |
 | `ACK` | Drop (forwarding opt-in only, off by default) | Same |
-| `ANON_REQ`, `TRACE`, `CONTROL`, `MULTIPART`, `RAW_CUSTOM`, unknown | Drop | Drop (except link-local zero-hop `CONTROL`, e.g. discovery replies, which can't propagate) |
+| `ANON_REQ` | Drop | Link-local zero-hop only: info queries, password login, and the resulting admin session from authenticated clients (stock crypto auth still enforced on every packet; flood/multi-hop stays dropped) |
+| `TRACE`, `MULTIPART`, `RAW_CUSTOM`, unknown | Drop | Drop |
+| `CONTROL` | Drop | Drop (except link-local zero-hop, e.g. discovery replies, which can't propagate) |
 
 Notes:
 
@@ -66,8 +68,12 @@ Notes:
 - Dedup uses the same seen-table as stock MeshCore (hash over payload type
   + payload), so one inbound message yields at most one local copy.
 - Local copies are rate-limited (30/minute, sliding window).
-- Remote administration over the mesh (`ANON_REQ` login) is dropped by the
-  policy — configure this node over USB serial only.
+- App login and remote administration are allowed, but only from direct radio
+  range (zero-hop): the admin password is still required, and stock's
+  cryptographic authentication applies to every session packet (the 1-byte
+  prefix the classifier sees is only a routing hint). Flood and multi-hop
+  admin traffic is dropped, so the node cannot be administered through the
+  wider mesh. USB serial remains available as the primary console.
 - With no valid policy file on the filesystem, the node boots **receive-only**
   (fail closed) until you configure owners via the CLI.
 
