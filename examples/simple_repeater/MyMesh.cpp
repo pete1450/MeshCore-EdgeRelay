@@ -1247,6 +1247,7 @@ void MyMesh::handleEdgeCommand(char* args, char* reply) {
   if (*args == 0 || strcmp(args, "help") == 0) {
     Serial.println("edge status                  - show policy + counters");
     Serial.println("edge owner list              - list owner pubkeys");
+    Serial.println("edge owner show <idx>        - show one owner pubkey in reply");
     Serial.println("edge owner add <64 hex>      - add owner, save");
     Serial.println("edge owner del <64 hex>      - remove owner, save");
     Serial.println("edge chan list               - list mirrored channel hashes");
@@ -1266,7 +1267,13 @@ void MyMesh::handleEdgeCommand(char* args, char* reply) {
     Serial.printf("  uplink_fwd: %lu  local_copy: %lu  direct_fwd: %lu  dropped: %lu\n",
                   (unsigned long) edge_stats.n_owner_uplink, (unsigned long) edge_stats.n_local_copy,
                   (unsigned long) edge_stats.n_direct_fwd, (unsigned long) edge_stats.n_dropped);
-    strcpy(reply, "OK");
+    // Compact summary in the reply as well: the reply channel always reaches
+    // the terminal, Serial block output may not on some setups.
+    snprintf(reply, 160, "OK - valid:%d owners:%d ch:%d up:%lu copy:%lu dfwd:%lu drop:%lu",
+             edge_policy.isValid() ? 1 : 0,
+             edge_policy.getNumOwners(), edge_policy.getNumChannels(),
+             (unsigned long) edge_stats.n_owner_uplink, (unsigned long) edge_stats.n_local_copy,
+             (unsigned long) edge_stats.n_direct_fwd, (unsigned long) edge_stats.n_dropped);
     return;
   }
 
@@ -1277,7 +1284,21 @@ void MyMesh::handleEdgeCommand(char* args, char* reply) {
       mesh::Utils::printHex(Serial, edge_policy.getOwnerKey(i), PUB_KEY_SIZE);
       Serial.println();
     }
-    strcpy(reply, "OK");
+    snprintf(reply, 160, "OK - %d owner(s)", edge_policy.getNumOwners());
+    return;
+  }
+
+  if (memcmp(args, "owner show ", 11) == 0) {
+    int idx = atoi(args + 11);
+    if (idx < 0 || idx >= edge_policy.getNumOwners()) {
+      strcpy(reply, "Err - bad index");
+      return;
+    }
+    // One full 64-char pubkey fits comfortably in the 160-char reply.
+    strcpy(reply, "OK ");
+    for (int k = 0; k < PUB_KEY_SIZE; k++) {
+      sprintf(reply + 3 + k * 2, "%02x", edge_policy.getOwnerKey(idx)[k]);
+    }
     return;
   }
 
@@ -1289,7 +1310,7 @@ void MyMesh::handleEdgeCommand(char* args, char* reply) {
     while (end > hex && *(end - 1) == ' ') *(--end) = 0;
     uint8_t key[PUB_KEY_SIZE];
     if (strlen(hex) != PUB_KEY_SIZE * 2 || !mesh::Utils::fromHex(key, PUB_KEY_SIZE, hex)) {
-      strcpy(reply, "Err - bad pubkey (need 64 hex chars)");
+      snprintf(reply, 160, "Err - bad pubkey (got %d chars, need 64)", (int) strlen(hex));
       return;
     }
     bool ok;
