@@ -1,12 +1,13 @@
 name: Run Unit Tests
 
 on:
-  push:
-    branches:
-      - main
-      - master
-  pull_request:
   workflow_dispatch:
+  # Manual-only for this fork: automatic test runs disabled.
+  # push:
+  #   branches:
+  #     - main
+  #     - master
+  # pull_request:
 
 jobs:
   test:

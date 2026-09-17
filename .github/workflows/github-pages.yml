@@ -2,9 +2,10 @@ name: Build and deploy Docs site to GitHub Pages
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
+  # Manual-only for this fork: automatic builds on main disabled.
+  # push:
+  #   branches:
+  #     - main
 
 permissions:
   contents: write
