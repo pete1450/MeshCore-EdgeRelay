@@ -73,7 +73,7 @@ Notes:
 
 ### CLI (`edge`)
 
-Over USB serial (also works on the ethernet console where enabled):
+Over USB serial at 115200 baud (also works on the ethernet console where enabled):
 
 ```
 edge status                  - show policy + counters
@@ -88,6 +88,16 @@ edge opt fwd_acks 0|1        - ACK forwarding, save (default 0)
 ```
 
 Configuration persists to `/edge_policy` on the device filesystem.
+
+#### Adding your companions
+
+1. In the MeshCore phone app, open the companion's node details and copy its
+   public key (64 hex characters).
+2. In the serial console: `edge owner add <paste the key>`.
+3. Confirm with `edge owner list` and `edge status`.
+
+Repeat for each companion you own (up to 8). Until at least one valid policy
+is saved, the node stays receive-only.
 
 ## Build and flash
 
