@@ -1,0 +1,18 @@
+name: Build Personal Relay Firmwares
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  # Manual-only for this fork: automatic tag builds disabled.
+  # push:
+  #   tags:
+  #     - 'personal-relay-*'
+
+jobs:
+  build-personal-relay-firmwares:
+    uses: ./.github/workflows/firmware-builder.yml
+    with:
+      firmware_type: 'personal_relay'
+      release_title_prefix: 'Personal Relay Firmware'
