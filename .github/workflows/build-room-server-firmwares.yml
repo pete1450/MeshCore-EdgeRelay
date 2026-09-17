@@ -5,9 +5,10 @@ permissions:
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'room-server-*'
+  # Manual-only for this fork: automatic tag builds disabled.
+  # push:
+  #   tags:
+  #     - 'room-server-*'
 
 jobs:
   build-room-server-firmwares:

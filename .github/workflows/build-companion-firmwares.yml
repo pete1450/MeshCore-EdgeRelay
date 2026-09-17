@@ -5,9 +5,10 @@ permissions:
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'companion-*'
+  # Manual-only for this fork: automatic tag builds disabled.
+  # push:
+  #   tags:
+  #     - 'companion-*'
 
 jobs:
   build-companion-firmwares:
