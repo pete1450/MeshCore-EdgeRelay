@@ -78,6 +78,7 @@ Over USB serial at 115200 baud (also works on the ethernet console where enabled
 ```
 edge status                  - show policy + counters
 edge owner list              - list owner pubkeys
+edge owner show <idx>        - show one owner pubkey in the reply
 edge owner add <64 hex>      - add owner, save
 edge owner del <64 hex>      - remove owner, save
 edge chan list               - list mirrored channel hashes
