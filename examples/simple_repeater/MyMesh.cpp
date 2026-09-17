@@ -455,7 +455,13 @@ bool MyMesh::allowPacketForward(const mesh::Packet *packet) {
       return false;
     }
   }
-  return true;
+  // Edge-relay final deny guard: never forward anything the directional policy
+  // did not approve, even if it somehow reached stock handling.
+  uint8_t self_hash[8];
+  uint8_t hash_len = packet->getPathHashSize();
+  if (hash_len > sizeof(self_hash)) hash_len = sizeof(self_hash);
+  self_id.copyHashTo(self_hash, hash_len);
+  return edge_policy.checkForward(packet, self_hash, hash_len);
 }
 
 const char *MyMesh::getLogDateTime() {
@@ -554,6 +560,56 @@ uint32_t MyMesh::getDirectRetransmitDelay(const mesh::Packet *packet) {
 }
 
 mesh::DispatcherAction MyMesh::onRecvPacket(mesh::Packet* pkt) {
+  // --- Edge-relay directional policy: classify BEFORE any stock handling. ---
+  {
+    uint8_t self_hash[8];
+    uint8_t hash_len = pkt->getPathHashSize();
+    if (hash_len > sizeof(self_hash)) hash_len = sizeof(self_hash);
+    self_id.copyHashTo(self_hash, hash_len);
+
+    EdgeAction edge_action = edge_policy.classify(pkt, self_hash, hash_len);
+    if (edge_action == EDGE_DROP) {
+      if (!getTables()->wasSeen(pkt)) {
+        getTables()->markSeen(pkt);
+        edge_stats.n_dropped++;
+      }
+      return ACTION_RELEASE;
+    }
+    if (edge_action == EDGE_LOCAL_COPY) {
+      if (!getTables()->wasSeen(pkt)) {
+        getTables()->markSeen(pkt);  // the original goes no further, and never yields a second copy
+        if (edge_policy.tryLocalCopy(millis())) {
+          mesh::Packet* copy = obtainNewPacket();
+          if (copy) {
+            // Preserve payload bytes and type exactly; sendZeroHop() reframes the
+            // route as DIRECT with an empty path, so neighboring repeaters neither
+            // forward it nor learn paths from it. The companion still sees the
+            // original sender (this node never re-signs or re-encrypts).
+            copy->header = pkt->header;
+            copy->transport_codes[0] = copy->transport_codes[1] = 0;
+            copy->payload_len = pkt->payload_len;
+            memcpy(copy->payload, pkt->payload, pkt->payload_len);
+            sendZeroHop(copy, getRetransmitDelay(copy));
+            edge_stats.n_local_copy++;
+          } else {
+            MESH_DEBUG_PRINTLN("edge: packet pool empty, local copy dropped");
+            edge_stats.n_dropped++;
+          }
+        } else {
+          MESH_DEBUG_PRINTLN("edge: local-copy rate limit reached");
+          edge_stats.n_dropped++;
+        }
+      }
+      return ACTION_RELEASE;
+    }
+    // EDGE_STOCK: fall through to normal handling below.
+    if (pkt->isRouteFlood() && pkt->getPathHashCount() == 0) {
+      edge_stats.n_owner_uplink++;
+    } else if (pkt->isRouteDirect() && pkt->getPathHashCount() > 0) {
+      edge_stats.n_direct_fwd++;
+    }
+  }
+
   if (pkt->getRouteType() == ROUTE_TYPE_TRANSPORT_FLOOD) {
     recv_pkt_region = region_map.findMatch(pkt, REGION_DENY_FLOOD);
   } else if (pkt->getRouteType() == ROUTE_TYPE_FLOOD) {
@@ -943,6 +999,11 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
 void MyMesh::begin(FILESYSTEM *fs) {
   mesh::Mesh::begin();
   _fs = fs;
+  // load edge-relay policy; an invalid/missing policy fails closed (receive-only)
+  memset(&edge_stats, 0, sizeof(edge_stats));
+  if (!edge_policy.load(_fs)) {
+    MESH_DEBUG_PRINTLN("edge: no valid policy file, running receive-only until configured (see 'edge' CLI)");
+  }
   // load persisted prefs
   _cli.loadPrefs(_fs);
   acl.load(_fs, self_id);
@@ -1029,32 +1090,19 @@ bool MyMesh::formatFileSystem() {
 }
 
 void MyMesh::sendSelfAdvertisement(int delay_millis, bool flood) {
-  mesh::Packet *pkt = createSelfAdvert();
-  if (pkt) {
-    if (flood) {
-      sendFloodScoped(default_scope, pkt, delay_millis, _prefs.path_hash_mode + 1);
-    } else {
-      sendZeroHop(pkt, delay_millis);
-    }
-  } else {
-    MESH_DEBUG_PRINTLN("ERROR: unable to create advertisement packet!");
-  }
+  // Edge relay: NEVER advertise. A moving node must not present itself as
+  // infrastructure, or the mesh learns paths through it that go stale.
+  (void) delay_millis;
+  (void) flood;
+  MESH_DEBUG_PRINTLN("edge: self-advert suppressed");
 }
 
 void MyMesh::updateAdvertTimer() {
-  if (_prefs.advert_interval > 0) { // schedule local advert timer
-    next_local_advert = futureMillis(((uint32_t)_prefs.advert_interval) * 2 * 60 * 1000);
-  } else {
-    next_local_advert = 0; // stop the timer
-  }
+  next_local_advert = 0;  // edge relay never sends adverts; timer stays stopped
 }
 
 void MyMesh::updateFloodAdvertTimer() {
-  if (_prefs.flood_advert_interval > 0) { // schedule flood advert timer
-    next_flood_advert = futureMillis(((uint32_t)_prefs.flood_advert_interval) * 60 * 60 * 1000);
-  } else {
-    next_flood_advert = 0; // stop the timer
-  }
+  next_flood_advert = 0;  // edge relay never sends adverts; timer stays stopped
 }
 
 void MyMesh::dumpLogFile() {
@@ -1193,6 +1241,117 @@ void MyMesh::clearStats() {
   ((SimpleMeshTables *)getTables())->resetStats();
 }
 
+void MyMesh::handleEdgeCommand(char* args, char* reply) {
+  while (*args == ' ') args++;
+
+  if (*args == 0 || strcmp(args, "help") == 0) {
+    Serial.println("edge status                  - show policy + counters");
+    Serial.println("edge owner list              - list owner pubkeys");
+    Serial.println("edge owner add <64 hex>      - add owner, save");
+    Serial.println("edge owner del <64 hex>      - remove owner, save");
+    Serial.println("edge chan list               - list mirrored channel hashes");
+    Serial.println("edge chan add <2 hex>        - add channel, save");
+    Serial.println("edge chan del <2 hex>        - remove channel, save");
+    Serial.println("edge opt mirror_adverts 0|1  - remote advert mirroring, save");
+    Serial.println("edge opt fwd_acks 0|1        - ACK forwarding, save");
+    strcpy(reply, "OK");
+    return;
+  }
+
+  if (strcmp(args, "status") == 0) {
+    Serial.printf("edge: policy %s\n", edge_policy.isValid() ? "OK" : "INVALID (receive-only)");
+    Serial.printf("  owners: %d  channels: %d  mirror_adverts: %d  fwd_acks: %d\n",
+                  edge_policy.getNumOwners(), edge_policy.getNumChannels(),
+                  edge_policy.getMirrorAdverts() ? 1 : 0, edge_policy.getFwdAcks() ? 1 : 0);
+    Serial.printf("  uplink_fwd: %lu  local_copy: %lu  direct_fwd: %lu  dropped: %lu\n",
+                  (unsigned long) edge_stats.n_owner_uplink, (unsigned long) edge_stats.n_local_copy,
+                  (unsigned long) edge_stats.n_direct_fwd, (unsigned long) edge_stats.n_dropped);
+    strcpy(reply, "OK");
+    return;
+  }
+
+  if (strcmp(args, "owner list") == 0) {
+    Serial.printf("owners (%d):\n", edge_policy.getNumOwners());
+    for (int i = 0; i < edge_policy.getNumOwners(); i++) {
+      Serial.print("  ");
+      mesh::Utils::printHex(Serial, edge_policy.getOwnerKey(i), PUB_KEY_SIZE);
+      Serial.println();
+    }
+    strcpy(reply, "OK");
+    return;
+  }
+
+  if (memcmp(args, "owner add ", 10) == 0 || memcmp(args, "owner del ", 10) == 0) {
+    bool is_add = (args[6] == 'a');
+    char* hex = args + 10;
+    while (*hex == ' ') hex++;
+    char* end = hex + strlen(hex);
+    while (end > hex && *(end - 1) == ' ') *(--end) = 0;
+    uint8_t key[PUB_KEY_SIZE];
+    if (strlen(hex) != PUB_KEY_SIZE * 2 || !mesh::Utils::fromHex(key, PUB_KEY_SIZE, hex)) {
+      strcpy(reply, "Err - bad pubkey (need 64 hex chars)");
+      return;
+    }
+    bool ok;
+    if (is_add) {
+      ok = edge_policy.addOwner(key) >= 0;
+    } else {
+      ok = edge_policy.removeOwner(key);
+    }
+    if (ok && edge_policy.save(_fs)) {
+      strcpy(reply, is_add ? "OK - owner added" : "OK - owner removed");
+    } else {
+      strcpy(reply, is_add ? "Err - duplicate, full, or save failed" : "Err - not found or save failed");
+    }
+    return;
+  }
+
+  if (strcmp(args, "chan list") == 0) {
+    Serial.printf("channels (%d):\n", edge_policy.getNumChannels());
+    for (int i = 0; i < edge_policy.getNumChannels(); i++) {
+      Serial.printf("  %02x\n", edge_policy.getChannelHash(i));
+    }
+    strcpy(reply, "OK");
+    return;
+  }
+
+  if (memcmp(args, "chan add ", 9) == 0 || memcmp(args, "chan del ", 9) == 0) {
+    bool is_add = (args[5] == 'a');
+    char* hex = args + 9;
+    while (*hex == ' ') hex++;
+    char* end = hex + strlen(hex);
+    while (end > hex && *(end - 1) == ' ') *(--end) = 0;
+    uint8_t h;
+    if (strlen(hex) != 2 || !mesh::Utils::fromHex(&h, 1, hex)) {
+      strcpy(reply, "Err - bad channel hash (need 2 hex chars)");
+      return;
+    }
+    bool ok = is_add ? (edge_policy.addChannel(h) >= 0) : edge_policy.removeChannel(h);
+    if (ok && edge_policy.save(_fs)) {
+      strcpy(reply, is_add ? "OK - channel added" : "OK - channel removed");
+    } else {
+      strcpy(reply, is_add ? "Err - duplicate, full, or save failed" : "Err - not found or save failed");
+    }
+    return;
+  }
+
+  if (memcmp(args, "opt ", 4) == 0) {
+    char* rest = args + 4;
+    if (memcmp(rest, "mirror_adverts ", 15) == 0) {
+      edge_policy.setMirrorAdverts(rest[15] == '1');
+      strcpy(reply, edge_policy.save(_fs) ? "OK" : "Err - save failed");
+    } else if (memcmp(rest, "fwd_acks ", 9) == 0) {
+      edge_policy.setFwdAcks(rest[9] == '1');
+      strcpy(reply, edge_policy.save(_fs) ? "OK" : "Err - save failed");
+    } else {
+      strcpy(reply, "Err - unknown opt (mirror_adverts, fwd_acks)");
+    }
+    return;
+  }
+
+  strcpy(reply, "Err - try 'edge help'");
+}
+
 void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply) {
   if (region_load_active) {
     if (StrHelper::isBlank(command)) {  // empty/blank line, signal to terminate 'load' operation
@@ -1279,6 +1438,8 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
       sendNodeDiscoverReq();
       strcpy(reply, "OK - Discover sent");
     }
+  } else if (memcmp(command, "edge ", 5) == 0 || strcmp(command, "edge") == 0) {
+    handleEdgeCommand(command + (command[4] == ' ' ? 5 : 4), reply);
   } else{
     _cli.handleCommand(sender_timestamp, command, reply);  // common CLI commands
   }
@@ -1291,19 +1452,7 @@ void MyMesh::loop() {
 
   mesh::Mesh::loop();
 
-  if (next_flood_advert && millisHasNowPassed(next_flood_advert)) {
-    mesh::Packet *pkt = createSelfAdvert();
-    uint32_t delay_millis = 0;
-    if (pkt) sendFloodScoped(default_scope, pkt, delay_millis, _prefs.path_hash_mode + 1);
-
-    updateFloodAdvertTimer(); // schedule next flood advert
-    updateAdvertTimer();      // also schedule local advert (so they don't overlap)
-  } else if (next_local_advert && millisHasNowPassed(next_local_advert)) {
-    mesh::Packet *pkt = createSelfAdvert();
-    if (pkt) sendZeroHop(pkt);
-
-    updateAdvertTimer(); // schedule next local advert
-  }
+  // NOTE: edge relay never sends self adverts (see sendSelfAdvertisement()).
 
   if (set_radio_at && millisHasNowPassed(set_radio_at)) { // apply pending (temporary) radio params
     set_radio_at = 0;                                     // clear timer

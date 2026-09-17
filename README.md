@@ -1,128 +1,117 @@
-## About MeshCore
+# MeshCore EdgeRelay
 
-MeshCore is a lightweight, portable C++ library that enables multi-hop packet routing for embedded projects using LoRa and other packet radios. It is designed for developers who want to create resilient, decentralized communication networks that work without the internet.
+A personal, car-based MeshCore edge relay. This is a **fork** of the official
+[MeshCore](https://github.com/meshcore-dev/MeshCore) repository, modified so a
+repeater installed in a parked car can serve its owner's companion devices
+without burdening the wider mesh.
 
-## 🔍 What is MeshCore?
+**Upstream:** https://github.com/meshcore-dev/MeshCore — all core protocol,
+radio, and platform code is theirs, under the MIT license (see `LICENSE`).
 
-MeshCore now supports a range of LoRa devices, allowing for easy flashing without the need to compile firmware manually. Users can flash a pre-built binary using tools like Adafruit ESPTool and interact with the network through a serial console.
-MeshCore provides the ability to create wireless mesh networks, similar to Meshtastic and Reticulum but with a focus on lightweight multi-hop packet routing for embedded projects. Unlike Meshtastic, which is tailored for casual LoRa communication, or Reticulum, which offers advanced networking, MeshCore balances simplicity with scalability, making it ideal for custom embedded solutions, where devices (nodes) can communicate over long distances by relaying messages through intermediate nodes. This is especially useful in off-grid, emergency, or tactical situations where traditional communication infrastructure is unavailable.
+## Why this fork exists
 
-## ⚡ Key Features
+A companion node inside an office building can't always reach the fixed
+repeater infrastructure directly. A relay on a car in the parking lot bridges
+that gap — but a moving relay that behaves like a normal repeater is a bad
+mesh citizen: it would learn and advertise paths that go stale, forward other
+people's traffic, and add airtime load. So this firmware changes the stock
+`simple_repeater` example into a **directional edge relay**:
 
-* Multi-Hop Packet Routing
-  * Devices can forward messages across multiple nodes, extending range beyond a single radio's reach.
-  * Supports up to a configurable number of hops to balance network efficiency and prevent excessive traffic.
-  * Nodes use fixed roles where "Companion" nodes are not repeating messages at all to prevent adverse routing paths from being used.
-* Supports LoRa Radios – Works with Heltec, RAK Wireless, and other LoRa-based hardware.
-* Decentralized & Resilient – No central server or internet required; the network is self-healing.
-* Low Power Consumption – Ideal for battery-powered or solar-powered devices.
-* Simple to Deploy – Pre-built example applications make it easy to get started.
+- **Uplink:** forwards flood traffic that originates directly from a
+  whitelisted companion the owner configured. Nothing else goes out.
+- **Downlink:** re-emits selected inbound traffic as a single local
+  zero-hop copy for nearby owners. Neighbors ignore it (direct route, empty
+  path) and no return path is learned through the car.
+- **Everything else:** dropped.
 
-## 🎯 What Can You Use MeshCore For?
+## What changed vs upstream
 
-* Off-Grid Communication: Stay connected even in remote areas.
-* Emergency Response & Disaster Recovery: Set up instant networks where infrastructure is down.
-* Outdoor Activities: Hiking, camping, and adventure racing communication.
-* Tactical & Security Applications: Military, law enforcement, and private security use cases.
-* IoT & Sensor Networks: Collect data from remote sensors and relay it back to a central location.
+All changes are confined to `examples/simple_repeater/` (plus this README).
+Core protocol code in `src/` is untouched.
 
-## 🚀 How to Get Started
+| Area | Change |
+|---|---|
+| `EdgePolicy.h` / `EdgePolicy.cpp` (new) | Packet classifier, persisted configuration, per-class rate limiting, counters. |
+| `MyMesh::onRecvPacket()` | Every received packet is classified **before** stock handling: `EDGE_STOCK` (proceed), `EDGE_LOCAL_COPY` (re-emit once as zero-hop direct, drop original), or `EDGE_DROP`. |
+| `MyMesh::allowPacketForward()` | Final deny guard — stock forwarding is permitted only for packets the policy approved. |
+| `sendSelfAdvertisement()` | No-op. The car **never** advertises, so the mesh never learns routes through a moving node. |
+| `updateAdvertTimer()` / `updateFloodAdvertTimer()` / `loop()` | Advert timers permanently stopped; timer blocks removed from `loop()`. Boot adverts are also suppressed via the no-op. |
+| `handleCommand()` | New `edge` CLI for configuration over USB serial (see below). |
 
-- Watch the [MeshCore QuickStart Playlist](https://www.youtube.com/watch?v=iaFltojJrAc&list=PLshzThxhw4O4WU_iZo3NmNZOv6KMrUuF9) by The Comms Channel
-- Watch the [MeshCore Technical Presentation](https://www.youtube.com/watch?v=OwmkVkZQTf4) by Liam Cottle.
-- Read through our [Frequently Asked Questions](./docs/faq.md) and [Documentation](https://docs.meshcore.io).
-- Flash the MeshCore firmware on a supported device.
-- Connect with a supported client.
+### Packet policy (default)
 
-For developers:
+| Traffic | Flood | Direct (car is next hop) |
+|---|---|---|
+| `TXT_MSG`, `REQ`, `RESPONSE`, `PATH` from a whitelisted owner (heard directly) | Forward normally | — |
+| Same, addressed to an owner (already circulating) | Re-emit locally as one zero-hop copy | — |
+| Same, unrelated to owners | Drop | Drop |
+| `GRP_TXT` / `GRP_DATA` on a configured channel | Owner's own transmission: forward; inbound: local copy | Forward if channel configured |
+| `ADVERT` from an owner | Drop (never export owner adverts) | — |
+| `ADVERT` from anyone else | Drop (mirroring opt-in only, off by default) | — |
+| `ACK` | Drop (forwarding opt-in only, off by default) | Same |
+| `ANON_REQ`, `TRACE`, `CONTROL`, `MULTIPART`, `RAW_CUSTOM`, unknown | Drop | Drop (except link-local zero-hop `CONTROL`, e.g. discovery replies, which can't propagate) |
 
-- Install [PlatformIO](https://docs.platformio.org) in [Visual Studio Code](https://code.visualstudio.com).
-- Clone and open the MeshCore repository in Visual Studio Code.
-- See the example applications you can modify and run:
-  - [Companion Radio](./examples/companion_radio) - For use with an external chat app, over BLE, USB or Wi-Fi.
-  - [KISS Modem](./examples/kiss_modem) - Serial KISS protocol bridge for host applications. ([protocol docs](./docs/kiss_modem_protocol.md))
-  - [Simple Repeater](./examples/simple_repeater) - Extends network coverage by relaying messages.
-  - [Simple Room Server](./examples/simple_room_server) - A simple BBS server for shared Posts.
-  - [Simple Secure Chat](./examples/simple_secure_chat) - Secure terminal based text communication between devices.
-  - [Simple Sensor](./examples/simple_sensor) - Remote sensor node with telemetry and alerting.
+Notes:
 
-The Simple Secure Chat example can be interacted with through the Serial Monitor in Visual Studio Code, or with a Serial USB Terminal on Android.
+- **Source authentication is weak by design of the wire format.** Ordinary
+  packets expose only a 1-byte public-key prefix, so owner matching is
+  prefix-based and spoofable. This firmware does not claim cryptographic
+  attribution of uplink traffic — it fails closed and treats the prefix
+  check as a routing hint, not authentication. Group traffic is matched on
+  the 1-byte channel hash you explicitly configure.
+- Local copies preserve payload bytes and payload type exactly; only the
+  route is reframed to zero-hop direct. Public/channel messages stay
+  public/channel messages — no per-companion DMs are created. The relay
+  never re-signs or re-encrypts anything.
+- Dedup uses the same seen-table as stock MeshCore (hash over payload type
+  + payload), so one inbound message yields at most one local copy.
+- Local copies are rate-limited (30/minute, sliding window).
+- Remote administration over the mesh (`ANON_REQ` login) is dropped by the
+  policy — configure this node over USB serial only.
+- With no valid policy file on the filesystem, the node boots **receive-only**
+  (fail closed) until you configure owners via the CLI.
 
-## ⚡️ MeshCore Flasher
+### CLI (`edge`)
 
-We have prebuilt firmware ready to flash on supported devices.
+Over USB serial (also works on the ethernet console where enabled):
 
-- Launch https://meshcore.io/flasher
-- Select a supported device
-- Flash one of the firmware types:
-  - Companion, Repeater or Room Server
-- Once flashing is complete, you can connect with one of the MeshCore clients below.
-
-## 📱 MeshCore Clients
-
-**Companion Firmware**
-
-The companion firmware can be connected to via BLE, USB or Wi-Fi depending on the firmware type you flashed.
-
-- Web: https://app.meshcore.nz
-- Android: https://play.google.com/store/apps/details?id=com.liamcottle.meshcore.android
-- iOS: https://apps.apple.com/us/app/meshcore/id6742354151?platform=iphone
-- NodeJS: https://github.com/liamcottle/meshcore.js
-- Python: https://github.com/fdlamotte/meshcore-cli
-
-**Repeater and Room Server Firmware**
-
-The repeater and room server firmware can be set up via USB in the web config tool.
-
-- https://config.meshcore.io
-
-They can also be managed via LoRa in the mobile app by using the Remote Management feature.
-
-## 🛠 Hardware Compatibility
-
-MeshCore is designed for devices listed in the [MeshCore Flasher](https://meshcore.io/flasher)
-
-## 📜 License
-
-MeshCore is open-source software released under the MIT License. You are free to use, modify, and distribute it for personal and commercial projects.
-
-## Contributing
-
-Please submit PR's using 'dev' as the base branch!
-For minor changes just submit your PR and we'll try to review it, but for anything more 'impactful' please open an Issue first and start a discussion. It is better to sound out what it is you want to achieve first, and try to come to a consensus on what the best approach is, especially when it impacts the structure or architecture of this codebase.
-
-Here are some general principles you should try to adhere to:
-* Keep it simple. Please, don't think like a high-level lang programmer. Think embedded, and keep code concise, without any unnecessary layers.
-* No dynamic memory allocation, except during setup/begin functions.
-* Use the same brace and indenting style that's in the core source modules. (A .clang-format is probably going to be added soon, but please do NOT retroactively re-format existing code. This just creates unnecessary diffs that make finding problems harder)
-
-Help us prioritize! Please react with thumbs-up to issues/PRs you care about most. We look at reaction counts when planning work.
-
-### Running unit tests
-
-To run unit tests, run the following command:
-
-```bash
-pio test --environment native --verbose
+```
+edge status                  - show policy + counters
+edge owner list              - list owner pubkeys
+edge owner add <64 hex>      - add owner, save
+edge owner del <64 hex>      - remove owner, save
+edge chan list               - list mirrored channel hashes
+edge chan add <2 hex>        - add channel, save
+edge chan del <2 hex>        - remove channel, save
+edge opt mirror_adverts 0|1  - remote advert mirroring, save (default 0)
+edge opt fwd_acks 0|1        - ACK forwarding, save (default 0)
 ```
 
-## Road-Map / To-Do
+Configuration persists to `/edge_policy` on the device filesystem.
 
-There are a number of fairly major features in the pipeline, with no particular time-frames attached yet. In very rough chronological order:
-- [X] Companion radio: UI redesign
-- [X] Repeater + Room Server: add ACL's (like Sensor Node has)
-- [X] Standardise Bridge mode for repeaters
-- [ ] Repeater/Bridge: Standardise the Transport Codes for zoning/filtering
-- [X] Core + Repeater: enhanced zero-hop neighbour discovery
-- [ ] Core: round-trip manual path support
-- [ ] Companion + Apps: support for multiple sub-meshes (and 'off-grid' client repeat mode)
-- [ ] Core + Apps: support for LZW message compression
-- [ ] Core: dynamic CR (Coding Rate) for weak vs strong hops
-- [ ] Core: new framework for hosting multiple virtual nodes on one physical device
-- [ ] V2 protocol spec: discussion and consensus around V2 packet protocol, including path hashes, new encryption specs, etc
+## Build and flash
 
-## 📞 Get Support
+Same as upstream. From this directory:
 
-- Report bugs and request features on the [GitHub Issues](https://github.com/ripplebiz/MeshCore/issues) page.
-- Find additional guides and components on [my site](https://buymeacoffee.com/ripplebiz).
-- Join [MeshCore Discord](https://meshcore.gg) to chat with the developers and get help from the community.
+```bash
+pio run -e <your_target>        # build
+pio run -e <your_target> -t upload   # flash
+```
+
+See the [upstream README](https://github.com/meshcore-dev/MeshCore#readme)
+for hardware compatibility, the web flasher, clients, and unit tests
+(`pio test -e native` covers `src/`, which this fork does not modify).
+
+## Goals and non-goals
+
+Goals: give the owner's companions one extra hop into the mesh; never
+poison other repeaters' learned paths; add no measurable load to the wider
+mesh; stay a single-purpose, reviewable change on top of stock code.
+
+Non-goals: general-purpose repeating, movement/parked detection, GPS,
+telemetry, remote administration, or any change to the MeshCore wire
+protocol.
+
+## License
+
+MIT — same as upstream. See `LICENSE`.

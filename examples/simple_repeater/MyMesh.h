@@ -36,6 +36,7 @@
 #include <helpers/RegionMap.h>
 #include <helpers/RoutingPolicy.h>
 #include "RateLimiter.h"
+#include "EdgePolicy.h"
 
 #ifdef WITH_BRIDGE
 extern AbstractBridge* bridge;
@@ -100,6 +101,8 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   RegionEntry* recv_pkt_region;
   TransportKey default_scope;
   RateLimiter discover_limiter, anon_limiter;
+  EdgePolicy edge_policy;      // directional good-citizen policy for this edge relay
+  EdgePolicyStats edge_stats;
   uint32_t pending_discover_tag;
   unsigned long pending_discover_until;
   bool region_load_active;
@@ -228,6 +231,7 @@ public:
   void clearStats() override;
 
   void handleCommand(uint32_t sender_timestamp, char* command, char* reply);
+  void handleEdgeCommand(char* args, char* reply);
   void loop();
 
 #if defined(WITH_BRIDGE)
