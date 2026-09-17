@@ -143,16 +143,21 @@ EdgeAction EdgePolicy::classify(const mesh::Packet* pkt, const uint8_t* self_has
         return _fwd_acks ? EDGE_STOCK : EDGE_DROP;
       }
       default:
-        // ANON_REQ, TRACE, CONTROL, MULTIPART, RAW_CUSTOM, unknown: drop.
+        // TRACE, CONTROL, MULTIPART, RAW_CUSTOM, unknown: drop.
+        // (ANON_REQ is answered only when zero-hop direct; see below.)
         return EDGE_DROP;
     }
   }
 
   if (isDirectRoute(route)) {
     if (path_count == 0) {
-      // Zero-hop direct: link-local only. Allow control (e.g. discovery replies)
-      // through stock handling; they cannot propagate. Everything else: drop.
-      return ptype == PAYLOAD_TYPE_CONTROL ? EDGE_STOCK : EDGE_DROP;
+      // Zero-hop direct: link-local only. Allow control (e.g. discovery) and
+      // anonymous info queries (e.g. app "get name") through stock handling;
+      // a direct reply cannot propagate or teach the mesh a path through us.
+      // The ANON_REQ login subtype is rejected post-decryption in
+      // onAnonDataRecv, so remote admin stays disabled. Everything else: drop.
+      return (ptype == PAYLOAD_TYPE_CONTROL || ptype == PAYLOAD_TYPE_ANON_REQ)
+                 ? EDGE_STOCK : EDGE_DROP;
     }
     // This node must be the named next hop, or the packet is not ours to touch.
     uint8_t hash_len = pkt->getPathHashSize();
@@ -181,6 +186,8 @@ EdgeAction EdgePolicy::classify(const mesh::Packet* pkt, const uint8_t* self_has
         return _fwd_acks ? EDGE_STOCK : EDGE_DROP;
       }
       default:
+        // ANON_REQ is only allowed zero-hop (handled above); multi-hop and
+        // everything else (TRACE, CONTROL, MULTIPART, RAW_CUSTOM): drop.
         return EDGE_DROP;
     }
   }

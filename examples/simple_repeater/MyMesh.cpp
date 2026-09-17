@@ -635,6 +635,14 @@ void MyMesh::onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const m
     uint8_t reply_len;
 
     reply_path_len = 0xFF;
+    // Edge policy: anonymous *info* queries (name/clock/regions) are allowed
+    // zero-hop, but remote login is never permitted: node configuration stays
+    // local-console-only. The subtype byte is only visible post-decryption,
+    // so this check lives here rather than in the pre-routing classifier.
+    if (edge_policy.isValid() && (data[4] == 0 || data[4] >= ' ')) {  // login request
+      edge_stats.n_dropped++;
+      return;
+    }
     if (data[4] == 0 || data[4] >= ' ') {   // is password, ie. a login request
       reply_len = handleLoginReq(sender, secret, timestamp, &data[4], packet->isRouteFlood());
     } else if (data[4] == ANON_REQ_TYPE_REGIONS && packet->isRouteDirect()) {

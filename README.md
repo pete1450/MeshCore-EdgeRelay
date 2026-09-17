@@ -49,7 +49,8 @@ Core protocol code in `src/` is untouched.
 | `ADVERT` from an owner | Drop (never export owner adverts) | — |
 | `ADVERT` from anyone else | Drop (mirroring opt-in only, off by default) | — |
 | `ACK` | Drop (forwarding opt-in only, off by default) | Same |
-| `ANON_REQ`, `TRACE`, `CONTROL`, `MULTIPART`, `RAW_CUSTOM`, unknown | Drop | Drop (except link-local zero-hop `CONTROL`, e.g. discovery replies, which can't propagate) |
+| `ANON_REQ`, `TRACE`, `MULTIPART`, `RAW_CUSTOM`, unknown | Drop | Drop (except link-local zero-hop `ANON_REQ` *info* queries — name/clock/regions, e.g. the app's "get name" — answered with a direct reply that can't propagate; the login subtype is always rejected) |
+| `CONTROL` | Drop | Drop (except link-local zero-hop, e.g. discovery replies, which can't propagate) |
 
 Notes:
 
@@ -66,8 +67,11 @@ Notes:
 - Dedup uses the same seen-table as stock MeshCore (hash over payload type
   + payload), so one inbound message yields at most one local copy.
 - Local copies are rate-limited (30/minute, sliding window).
-- Remote administration over the mesh (`ANON_REQ` login) is dropped by the
-  policy — configure this node over USB serial only.
+- Remote administration over the mesh (`ANON_REQ` login) is rejected by the
+  policy — configure this node over USB serial only. Anonymous *info* queries
+  (node name, clock, regions) are answered, but only from direct radio range
+  (zero-hop); the reply is a link-local direct packet, so it cannot propagate
+  or teach the mesh a path through this node.
 - With no valid policy file on the filesystem, the node boots **receive-only**
   (fail closed) until you configure owners via the CLI.
 
