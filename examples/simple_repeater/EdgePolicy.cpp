@@ -151,11 +151,11 @@ EdgeAction EdgePolicy::classify(const mesh::Packet* pkt, const uint8_t* self_has
 
   if (isDirectRoute(route)) {
     if (path_count == 0) {
-      // Zero-hop direct: link-local only. Allow control (e.g. discovery) and
-      // anonymous info queries (e.g. app "get name") through stock handling;
-      // a direct reply cannot propagate or teach the mesh a path through us.
-      // The ANON_REQ login subtype is rejected post-decryption in
-      // onAnonDataRecv, so remote admin stays disabled. Everything else: drop.
+      // Zero-hop direct: link-local only. Allow control (e.g. discovery),
+      // anonymous requests (info queries + password login), and post-login
+      // admin session packets from known clients (handled just above in
+      // onRecvPacket) through stock handling; a direct exchange cannot
+      // propagate or teach the mesh a path through us. Everything else: drop.
       return (ptype == PAYLOAD_TYPE_CONTROL || ptype == PAYLOAD_TYPE_ANON_REQ)
                  ? EDGE_STOCK : EDGE_DROP;
     }

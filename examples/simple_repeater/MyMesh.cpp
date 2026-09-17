@@ -562,6 +562,30 @@ uint32_t MyMesh::getDirectRetransmitDelay(const mesh::Packet *packet) {
 mesh::DispatcherAction MyMesh::onRecvPacket(mesh::Packet* pkt) {
   // --- Edge-relay directional policy: classify BEFORE any stock handling. ---
   {
+    // Authenticated admin sessions: after an ANON login, the app talks from its
+    // session identity, which lives in our ACL (it is NOT an owner pubkey — the
+    // login uses an ephemeral key). Packets addressed to us, heard directly
+    // (zero-hop), from a known client bypass the edge classifier here; stock
+    // still performs the real cryptographic authentication (shared-secret
+    // decrypt), so a spoofed 1-byte src prefix cannot get in. This deliberately
+    // ignores edge_policy validity: a bad policy file must not lock out the
+    // admin recovery path. Flood and multi-hop admin traffic stays dropped.
+    uint8_t sess_ptype = pkt->getPayloadType();
+    if ((sess_ptype == PAYLOAD_TYPE_REQ || sess_ptype == PAYLOAD_TYPE_TXT_MSG ||
+         sess_ptype == PAYLOAD_TYPE_RESPONSE) &&
+        pkt->getPathHashCount() == 0 && pkt->payload_len >= 2) {
+      uint8_t dest_hash = pkt->payload[0];
+      uint8_t src_hash = pkt->payload[1];
+      if (self_id.isHashMatch(&dest_hash)) {
+        int n = searchPeersByHash(&src_hash);
+        for (int k = 0; k < n; k++) {
+          if (acl.getClientByIdx(matching_peer_indexes[k])->permissions != 0) {
+            return Mesh::onRecvPacket(pkt);  // stock authenticates + handles
+          }
+        }
+      }
+    }
+
     uint8_t self_hash[8];
     uint8_t hash_len = pkt->getPathHashSize();
     if (hash_len > sizeof(self_hash)) hash_len = sizeof(self_hash);
@@ -635,14 +659,6 @@ void MyMesh::onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const m
     uint8_t reply_len;
 
     reply_path_len = 0xFF;
-    // Edge policy: anonymous *info* queries (name/clock/regions) are allowed
-    // zero-hop, but remote login is never permitted: node configuration stays
-    // local-console-only. The subtype byte is only visible post-decryption,
-    // so this check lives here rather than in the pre-routing classifier.
-    if (edge_policy.isValid() && (data[4] == 0 || data[4] >= ' ')) {  // login request
-      edge_stats.n_dropped++;
-      return;
-    }
     if (data[4] == 0 || data[4] >= ' ') {   // is password, ie. a login request
       reply_len = handleLoginReq(sender, secret, timestamp, &data[4], packet->isRouteFlood());
     } else if (data[4] == ANON_REQ_TYPE_REGIONS && packet->isRouteDirect()) {
