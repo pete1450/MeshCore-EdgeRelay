@@ -1356,7 +1356,15 @@ void MyMesh::handleEdgeCommand(char* args, char* reply) {
     for (int i = 0; i < edge_policy.getNumChannels(); i++) {
       Serial.printf("  %02x\n", edge_policy.getChannelHash(i));
     }
-    strcpy(reply, "OK");
+    // Full list in the reply as well: the reply channel always reaches
+    // the terminal, Serial block output may not on some setups.
+    {
+      char* p = reply;
+      p += snprintf(p, 160, "OK - ch(%d):", edge_policy.getNumChannels());
+      for (int i = 0; i < edge_policy.getNumChannels() && (p - reply) < 140; i++) {
+        p += snprintf(p, 160 - (p - reply), " %02x", edge_policy.getChannelHash(i));
+      }
+    }
     return;
   }
 
