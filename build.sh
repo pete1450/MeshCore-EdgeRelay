@@ -16,6 +16,7 @@ Commands:
   build-matching-firmwares <build-match-spec>: Build all firmwares for build targets containing the string given for <build-match-spec>.
   build-companion-firmwares: Build all companion firmwares for all build targets.
   build-repeater-firmwares: Build all repeater firmwares for all build targets.
+  build-personal-relay-firmwares: Build all personal relay firmwares for all build targets.
   build-room-server-firmwares: Build all chat room server firmwares for all build targets.
 
 Examples:
@@ -30,6 +31,9 @@ $ sh build.sh build-companion-firmwares
 
 Build all repeater firmwares
 $ sh build.sh build-repeater-firmwares
+
+Build all personal relay firmwares
+$ sh build.sh build-personal-relay-firmwares
 
 Build all chat room server firmwares
 $ sh build.sh build-room-server-firmwares
@@ -214,6 +218,13 @@ build_repeater_firmwares() {
 
 }
 
+build_personal_relay_firmwares() {
+
+  # build all personal relay firmwares
+  build_all_firmwares_by_suffix "_personal_relay"
+
+}
+
 build_companion_firmwares() {
 
 #  # build specific companion firmwares
@@ -290,6 +301,8 @@ elif [[ $1 == "build-companion-firmwares" ]]; then
   build_companion_firmwares
 elif [[ $1 == "build-repeater-firmwares" ]]; then
   build_repeater_firmwares
+elif [[ $1 == "build-personal-relay-firmwares" ]]; then
+  build_personal_relay_firmwares
 elif [[ $1 == "build-room-server-firmwares" ]]; then
   build_room_server_firmwares
 elif [[ $1 == "build-kiss-radio-firmwares" ]]; then
@@ -299,6 +312,8 @@ elif [[ $1 == "get-companion-firmwares-to-build" ]]; then
   get_pio_envs_ending_with_string "_companion_radio_ble"
 elif [[ $1 == "get-repeater-firmwares-to-build" ]]; then
   get_pio_envs_ending_with_string "_repeater"
+elif [[ $1 == "get-personal-relay-firmwares-to-build" ]]; then
+  get_pio_envs_ending_with_string "_personal_relay"
 elif [[ $1 == "get-room-server-firmwares-to-build" ]]; then
   get_pio_envs_ending_with_string "_room_server"
 fi

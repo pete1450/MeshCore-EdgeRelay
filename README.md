@@ -14,8 +14,9 @@ A companion node inside an office building can't always reach the fixed
 repeater infrastructure directly. A relay on a car in the parking lot bridges
 that gap — but a moving relay that behaves like a normal repeater is a bad
 mesh citizen: it would learn and advertise paths that go stale, forward other
-people's traffic, and add airtime load. So this firmware changes the stock
-`simple_repeater` example into a **directional edge relay**:
+people's traffic, and add airtime load. So this fork adds a new
+`examples/personal_relay` firmware — a **directional edge relay** built on the
+stock `simple_repeater` example, which is left untouched:
 
 - **Uplink:** forwards flood traffic that originates directly from a
   whitelisted companion the owner configured. Nothing else goes out.
@@ -26,8 +27,9 @@ people's traffic, and add airtime load. So this firmware changes the stock
 
 ## What changed vs upstream
 
-All changes are confined to `examples/simple_repeater/` (plus this README).
-Core protocol code in `src/` is untouched.
+All changes are confined to `examples/personal_relay/` (plus this README,
+`build.sh`, one new build environment, and one new workflow). Core protocol
+code in `src/` and the stock `simple_repeater` example are untouched.
 
 | Area | Change |
 |---|---|
@@ -115,6 +117,14 @@ pio run -e <your_target>        # build
 pio run -e <your_target> -t upload   # flash
 ```
 
+Every board with a stock repeater target also has a personal relay target:
+`<board>_personal_relay` (e.g. `RAK_4631_personal_relay`, `Heltec_v3_personal_relay`).
+Each one mirrors its board's normal repeater target with only the example
+swapped to `examples/personal_relay` and the advert name changed to
+`<board> Personal Relay`. Or run the **Build Personal Relay Firmwares**
+workflow from the Actions tab and download the artifact (`.uf2` for the
+RAK4631).
+
 See the [upstream README](https://github.com/meshcore-dev/MeshCore#readme)
 for hardware compatibility, the web flasher, clients, and unit tests
 (`pio test -e native` covers `src/`, which this fork does not modify).
@@ -126,8 +136,8 @@ poison other repeaters' learned paths; add no measurable load to the wider
 mesh; stay a single-purpose, reviewable change on top of stock code.
 
 Non-goals: general-purpose repeating, movement/parked detection, GPS,
-telemetry, remote administration, or any change to the MeshCore wire
-protocol.
+telemetry, administration beyond direct radio range, or any change to the
+MeshCore wire protocol.
 
 ## License
 
