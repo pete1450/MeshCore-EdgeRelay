@@ -117,11 +117,13 @@ pio run -e <your_target>        # build
 pio run -e <your_target> -t upload   # flash
 ```
 
-The personal relay currently has one build target: `RAK_4631_personal_relay`.
-More boards can be added by mirroring its `[env:..._personal_relay]` block in
-their `variants/*/platformio.ini`. Or run the **Build Personal Relay
-Firmwares** workflow from the Actions tab and download the artifact (`.uf2`
-for the RAK4631).
+Every board with a stock repeater target also has a personal relay target:
+`<board>_personal_relay` (e.g. `RAK_4631_personal_relay`, `Heltec_v3_personal_relay`).
+Each one mirrors its board's normal repeater target with only the example
+swapped to `examples/personal_relay` and the advert name changed to
+`<board> Personal Relay`. Or run the **Build Personal Relay Firmwares**
+workflow from the Actions tab and download the artifact (`.uf2` for the
+RAK4631).
 
 See the [upstream README](https://github.com/meshcore-dev/MeshCore#readme)
 for hardware compatibility, the web flasher, clients, and unit tests

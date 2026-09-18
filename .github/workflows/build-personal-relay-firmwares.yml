@@ -14,5 +14,5 @@ jobs:
   build-personal-relay-firmwares:
     uses: ./.github/workflows/firmware-builder.yml
     with:
-      firmware_type: 'personal_relay'
+      firmware_type: 'personal-relay'
       release_title_prefix: 'Personal Relay Firmware'
